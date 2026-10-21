@@ -1,0 +1,42 @@
+From b93a4c3bdaa1d3c22bf17304e8503c4380c14f71 Mon Sep 17 00:00:00 2001
+From: Horange <horange321@163.com>
+Date: Wed, 21 Oct 2026 12:49:10 +0800
+Subject: [PATCH 4/4] =?UTF-8?q?<Add>=20=E4=BD=8E=E7=94=B5=E9=87=8F?=
+ =?UTF-8?q?=E5=8F=98=E7=BA=A2?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change-Id: If88951f6a7c3fe33ef13eabb7fd720ec87206ff1
+---
+ .../com/android/systemui/battery/TrioBatteryDrawable.kt   | 8 +++++---
+ 1 file changed, 5 insertions(+), 3 deletions(-)
+
+diff --git a/packages/SystemUI/src/com/android/systemui/battery/TrioBatteryDrawable.kt b/packages/SystemUI/src/com/android/systemui/battery/TrioBatteryDrawable.kt
+index 548339ec0..e27ce72ac 100644
+--- a/packages/SystemUI/src/com/android/systemui/battery/TrioBatteryDrawable.kt
++++ b/packages/SystemUI/src/com/android/systemui/battery/TrioBatteryDrawable.kt
+@@ -61,15 +61,17 @@ class TrioBatteryDrawable(private val context: Context) : Drawable() {
+             val color = (foreground and 0x00ffffff) or
+                     (Color.alpha(foreground) * drawableAlpha / 255 shl 24)
+             val muted = (color and 0x00ffffff) or (Color.alpha(color) * 0x55 / 255 shl 24)
+-            val ringColor = if (charging)
+-                (0x00ff00 or (Color.alpha(color) shl 24))
+-            else color
+ 
+             val batteryManager = context.getSystemService(BatteryManager::class.java)
+             val batteryLevel =
+                 batteryManager?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+                     ?.takeIf { it in 0..100 } ?: 0
+             val ring = RectF(cx - radius, cy - radius, cx + radius, cy + radius)
++            val ringColor = if (charging)
++                (0x00ff00 or (Color.alpha(color) shl 24))
++            else if (batteryLevel <= 20)
++                (0xff0000 or (Color.alpha(color) shl 24))
++            else color
+             paint.style = Paint.Style.STROKE
+             paint.strokeCap = Paint.Cap.ROUND
+             paint.strokeWidth = 2.2f * 16f
+-- 
+2.56.0
+

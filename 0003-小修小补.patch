@@ -1,0 +1,465 @@
+From 37704c63dcd0ea485c3a3c51ca78378cb07deaa9 Mon Sep 17 00:00:00 2001
+From: Horange <horange321@163.com>
+Date: Sun, 18 Oct 2026 13:35:12 +0800
+Subject: [PATCH 3/4] =?UTF-8?q?=E5=B0=8F=E4=BF=AE=E5=B0=8F=E8=A1=A5?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change-Id: I30319fac85195663dc2589e4baf0a641f72aeea9
+---
+ .../systemui/battery/BatteryMeterView.java    |  3 -
+ .../systemui/battery/TrioBatteryDrawable.kt   | 65 +++++++++----------
+ .../battery/ui/composable/UnifiedBattery.kt   | 12 ----
+ .../prod/MobileConnectionRepositoryImpl.kt    | 14 ----
+ .../MobileConnectionRepositoryKairosImpl.kt   | 14 ----
+ .../mobile/ui/binder/MobileIconBinder.kt      | 12 ----
+ .../ui/binder/MobileIconBinderKairos.kt       | 12 ----
+ .../pipeline/mobile/ui/compose/MobileIcon.kt  | 10 ---
+ .../pipeline/wifi/ui/model/WifiIcon.kt        |  7 --
+ .../policy/BatteryControllerImpl.java         |  6 --
+ 10 files changed, 30 insertions(+), 125 deletions(-)
+
+diff --git a/packages/SystemUI/src/com/android/systemui/battery/BatteryMeterView.java b/packages/SystemUI/src/com/android/systemui/battery/BatteryMeterView.java
+index 500e85f50..8cf320361 100644
+--- a/packages/SystemUI/src/com/android/systemui/battery/BatteryMeterView.java
++++ b/packages/SystemUI/src/com/android/systemui/battery/BatteryMeterView.java
+@@ -417,7 +417,6 @@ public class BatteryMeterView extends LinearLayout implements DarkReceiver {
+     }
+ 
+     void updatePercentText() {
+-        // TODO：接入三合一图标的数据后，再决定百分比和剩余时间的展示方式。
+         updateContentDescription();
+     }
+ 
+@@ -496,7 +495,6 @@ public class BatteryMeterView extends LinearLayout implements DarkReceiver {
+     }
+ 
+     void updateShowPercent() {
+-        // 占位阶段只显示三合一图标。
+         if (mBatteryPercentView != null) {
+             removeView(mBatteryPercentView);
+             mBatteryPercentView = null;
+@@ -547,7 +545,6 @@ public class BatteryMeterView extends LinearLayout implements DarkReceiver {
+         mBatteryStateUnknown = isUnknown;
+         updateContentDescription();
+ 
+-        // TODO：接入未知电量状态；占位阶段保持三合一图标。
+         mBatteryIconView.setImageDrawable(mTrioDrawable);
+ 
+         updateShowPercent();
+diff --git a/packages/SystemUI/src/com/android/systemui/battery/TrioBatteryDrawable.kt b/packages/SystemUI/src/com/android/systemui/battery/TrioBatteryDrawable.kt
+index 6459203a6..548339ec0 100644
+--- a/packages/SystemUI/src/com/android/systemui/battery/TrioBatteryDrawable.kt
++++ b/packages/SystemUI/src/com/android/systemui/battery/TrioBatteryDrawable.kt
+@@ -26,12 +26,17 @@ import android.graphics.RectF
+ import android.graphics.drawable.Drawable
+ import android.net.wifi.WifiManager
+ import android.os.BatteryManager
+-import android.telephony.TelephonyManager
+ import android.telephony.TelephonyDisplayInfo
++import android.telephony.TelephonyManager
+ import com.android.settingslib.mobile.TelephonyIcons
++import kotlin.compareTo
++import kotlin.div
+ import kotlin.math.cos
+ import kotlin.math.min
+ import kotlin.math.sin
++import kotlin.text.toFloat
++import kotlin.text.toInt
++import kotlin.times
+ 
+ /** 状态栏三合一图标，Compose 和 View 共用 canvas.py 的绘制比例。 */
+ class TrioBatteryDrawable(private val context: Context) : Drawable() {
+@@ -53,18 +58,13 @@ class TrioBatteryDrawable(private val context: Context) : Drawable() {
+             val cx = 256f
+             val cy = 256f
+             val radius = 512f * 0.43f
+-            val color =
+-                (foreground and 0x00ffffff) or
++            val color = (foreground and 0x00ffffff) or
+                     (Color.alpha(foreground) * drawableAlpha / 255 shl 24)
+             val muted = (color and 0x00ffffff) or (Color.alpha(color) * 0x55 / 255 shl 24)
+-            val ringColor =
+-                if (charging) {
+-                    (0x00ff00 or (Color.alpha(color) shl 24))
+-                } else {
+-                    color
+-                }
++            val ringColor = if (charging)
++                (0x00ff00 or (Color.alpha(color) shl 24))
++            else color
+ 
+-            // TODO：接入 BatteryViewModel，当前从系统 BatteryManager 读取。
+             val batteryManager = context.getSystemService(BatteryManager::class.java)
+             val batteryLevel =
+                 batteryManager?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+@@ -78,18 +78,14 @@ class TrioBatteryDrawable(private val context: Context) : Drawable() {
+             paint.color = ringColor
+             canvas.drawArc(ring, -200f, 220f * batteryLevel / 100f, false, paint)
+ 
+-            // TODO：接入 MobileIconViewModel；平台等级范围为 0..4。
+             val telephonyManager = context.getSystemService(TelephonyManager::class.java)
+             val wifiManager = context.getSystemService(WifiManager::class.java)
+             val wifiInfo = wifiManager?.connectionInfo
+             val wifiConnected = wifiInfo != null && wifiInfo.networkId != -1
+-            // TODO：接入 WifiViewModel；平台等级范围为 0..4。
+-            val wifiLevel =
+-                if (wifiConnected && wifiInfo!!.rssi != -127) {
+-                    wifiManager.calculateSignalLevel(wifiInfo.rssi)
+-                } else {
+-                    0
+-                }
++            val wifiLevel = if (wifiConnected && wifiInfo!!.rssi != -127)
++                wifiManager.calculateSignalLevel(wifiInfo.rssi)
++            else 0
++
+             val dotCy = cy + radius * 0.40f
+             if (wifiConnected) {
+                 paint.strokeWidth = 3f * 16f
+@@ -114,7 +110,6 @@ class TrioBatteryDrawable(private val context: Context) : Drawable() {
+                 paint.color = if (wifiLevel >= 1) color else muted
+                 canvas.drawCircle(cx, dotCy, 2f * 16f, paint)
+             } else {
+-                // TODO：改为直接使用 MobileIconViewModel.networkTypeIcon。
+                 val typeIcon =
+                     networkTypeIcon(
+                         displayNetworkType ?: telephonyManager?.dataNetworkType,
+@@ -127,14 +122,12 @@ class TrioBatteryDrawable(private val context: Context) : Drawable() {
+                             val iconWidth =
+                                 (icon.intrinsicWidth.toFloat() / icon.intrinsicHeight * iconHeight)
+                                     .toInt()
+-//                            val iconCenterY = cy + radius * 0.1f
+-                            val iconCenterY = cy
+                             icon.setTint(color)
+                             icon.setBounds(
+                                 (cx - iconWidth / 2).toInt(),
+-                                (iconCenterY - iconHeight / 2).toInt(),
++                                (cy - iconHeight / 2).toInt(),
+                                 (cx + iconWidth / 2).toInt(),
+-                                (iconCenterY + iconHeight / 2).toInt(),
++                                (cy + iconHeight / 2).toInt(),
+                             )
+                             icon.draw(canvas)
+                         }
+@@ -191,30 +184,32 @@ class TrioBatteryDrawable(private val context: Context) : Drawable() {
+         invalidateSelf()
+     }
+ 
+-    @Deprecated("Deprecated in Java") override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
++    @Deprecated("Deprecated in Java")
++    override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
+ 
+     private fun networkTypeIcon(type: Int?, overrideType: Int): Int? =
+         when (type) {
+             TelephonyManager.NETWORK_TYPE_NR -> TelephonyIcons.ICON_5G
+-            TelephonyManager.NETWORK_TYPE_LTE ->
+-                if (
+-                    overrideType == TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NR_NSA ||
+-                        overrideType == TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NR_NSA_MMWAVE ||
+-                        overrideType == TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NR_ADVANCED
+-                ) {
+-                    TelephonyIcons.ICON_5G
+-                } else {
+-                    TelephonyIcons.ICON_LTE
+-                }
++            TelephonyManager.NETWORK_TYPE_LTE -> if (overrideType in arrayOf(
++                    TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NR_NSA,
++                    TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NR_NSA_MMWAVE,
++                    TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NR_ADVANCED
++                )
++            )
++                TelephonyIcons.ICON_5G
++            else
++                TelephonyIcons.ICON_LTE
++
+             TelephonyManager.NETWORK_TYPE_HSPAP -> TelephonyIcons.ICON_H_PLUS
+             TelephonyManager.NETWORK_TYPE_HSPA,
+             TelephonyManager.NETWORK_TYPE_HSDPA,
+             TelephonyManager.NETWORK_TYPE_HSUPA -> TelephonyIcons.ICON_H
++
+             TelephonyManager.NETWORK_TYPE_UMTS -> TelephonyIcons.ICON_3G
+             TelephonyManager.NETWORK_TYPE_EDGE -> TelephonyIcons.ICON_E
+             TelephonyManager.NETWORK_TYPE_GPRS,
+             TelephonyManager.NETWORK_TYPE_GSM -> TelephonyIcons.ICON_G
++
+             else -> null
+         }
+-
+ }
+diff --git a/packages/SystemUI/src/com/android/systemui/statusbar/pipeline/battery/ui/composable/UnifiedBattery.kt b/packages/SystemUI/src/com/android/systemui/statusbar/pipeline/battery/ui/composable/UnifiedBattery.kt
+index dc584bfc9..3bb84b489 100644
+--- a/packages/SystemUI/src/com/android/systemui/statusbar/pipeline/battery/ui/composable/UnifiedBattery.kt
++++ b/packages/SystemUI/src/com/android/systemui/statusbar/pipeline/battery/ui/composable/UnifiedBattery.kt
+@@ -26,7 +26,6 @@ import android.telephony.SignalStrength
+ import android.telephony.TelephonyCallback
+ import android.telephony.TelephonyDisplayInfo
+ import android.telephony.TelephonyManager
+-import android.util.Log
+ import androidx.compose.foundation.Canvas
+ import androidx.compose.foundation.layout.fillMaxSize
+ import androidx.compose.foundation.layout.size
+@@ -97,7 +96,6 @@ fun BatteryCanvas(
+     modifier: Modifier = Modifier,
+     contentDescription: String = "",
+ ) {
+-
+     val totalWidth by
+         remember(glyphs) {
+             mutableFloatStateOf(
+@@ -182,16 +180,6 @@ fun UnifiedBattery(
+ ) {
+     var bounds by remember { mutableStateOf(Rect()) }
+ 
+-    SideEffect {
+-        Log.d(
+-            "UnifiedBattery",
+-            "Rendering trio Compose battery: level=${viewModel.level}, " +
+-                "iconCharging=${viewModel.isCharging}, full=${viewModel.isFull}, " +
+-                "glyphs=${viewModel.glyphList.size}, " +
+-                "placeholder=trio, frame=512x512",
+-        )
+-    }
+-
+     val colorProvider = {
+         if (isDarkProvider().isDarkTheme(bounds)) {
+             viewModel.colorProfile.dark
+diff --git a/packages/SystemUI/src/com/android/systemui/statusbar/pipeline/mobile/data/repository/prod/MobileConnectionRepositoryImpl.kt b/packages/SystemUI/src/com/android/systemui/statusbar/pipeline/mobile/data/repository/prod/MobileConnectionRepositoryImpl.kt
+index f435a9feb..8598f6862 100644
+--- a/packages/SystemUI/src/com/android/systemui/statusbar/pipeline/mobile/data/repository/prod/MobileConnectionRepositoryImpl.kt
++++ b/packages/SystemUI/src/com/android/systemui/statusbar/pipeline/mobile/data/repository/prod/MobileConnectionRepositoryImpl.kt
+@@ -42,7 +42,6 @@ import android.telephony.TelephonyManager.EXTRA_SUBSCRIPTION_ID
+ import android.telephony.TelephonyManager.NETWORK_TYPE_UNKNOWN
+ import android.telephony.TelephonyManager.UNKNOWN_CARRIER_ID
+ import android.telephony.satellite.NtnSignalStrength
+-import android.util.Log
+ import com.android.settingslib.Utils
+ import com.android.systemui.broadcast.BroadcastDispatcher
+ import com.android.systemui.dagger.qualifiers.Background
+@@ -181,11 +180,6 @@ class MobileConnectionRepositoryImpl(
+                         override fun onDisplayInfoChanged(
+                             telephonyDisplayInfo: TelephonyDisplayInfo
+                         ) {
+-                            // 同时记录基础网络和显示覆盖类型，便于辨别 LTE 上的 5G 标识。
+-                            Log.d(
+-                                "MobileSignalDebug",
+-                                "source subId=$subId displayInfo=$telephonyDisplayInfo",
+-                            )
+                             logger.logOnDisplayInfoChanged(telephonyDisplayInfo, subId)
+                             trySend(CallbackEvent.OnDisplayInfoChanged(telephonyDisplayInfo))
+                         }
+@@ -196,14 +190,6 @@ class MobileConnectionRepositoryImpl(
+                         }
+ 
+                         override fun onSignalStrengthsChanged(signalStrength: SignalStrength) {
+-                            // 分别记录总等级与各制式的等级、dBm，便于对照状态栏。
+-                            val cells = signalStrength.cellSignalStrengths.joinToString { cell ->
+-                                "${cell.javaClass.simpleName}(level=${cell.level}, dbm=${cell.dbm})"
+-                            }
+-                            Log.d(
+-                                "MobileSignalDebug",
+-                                "source subId=$subId level=${signalStrength.level} cells=[$cells]",
+-                            )
+                             logger.logOnSignalStrengthsChanged(signalStrength, subId)
+                             trySend(CallbackEvent.OnSignalStrengthChanged(signalStrength))
+                         }
+diff --git a/packages/SystemUI/src/com/android/systemui/statusbar/pipeline/mobile/data/repository/prod/MobileConnectionRepositoryKairosImpl.kt b/packages/SystemUI/src/com/android/systemui/statusbar/pipeline/mobile/data/repository/prod/MobileConnectionRepositoryKairosImpl.kt
+index 82e25c73c..ef803a422 100644
+--- a/packages/SystemUI/src/com/android/systemui/statusbar/pipeline/mobile/data/repository/prod/MobileConnectionRepositoryKairosImpl.kt
++++ b/packages/SystemUI/src/com/android/systemui/statusbar/pipeline/mobile/data/repository/prod/MobileConnectionRepositoryKairosImpl.kt
+@@ -42,7 +42,6 @@ import android.telephony.TelephonyManager.EXTRA_SUBSCRIPTION_ID
+ import android.telephony.TelephonyManager.NETWORK_TYPE_UNKNOWN
+ import android.telephony.TelephonyManager.UNKNOWN_CARRIER_ID
+ import android.telephony.satellite.NtnSignalStrength
+-import android.util.Log
+ import com.android.settingslib.Utils
+ import com.android.systemui.broadcast.BroadcastDispatcher
+ import com.android.systemui.dagger.qualifiers.Background
+@@ -184,11 +183,6 @@ constructor(
+                     }
+ 
+                     override fun onDisplayInfoChanged(telephonyDisplayInfo: TelephonyDisplayInfo) {
+-                        // 同时记录基础网络和显示覆盖类型，便于辨别 LTE 上的 5G 标识。
+-                        Log.d(
+-                            "MobileSignalDebug",
+-                            "source kairos subId=$subId displayInfo=$telephonyDisplayInfo",
+-                        )
+                         logger.logOnDisplayInfoChanged(telephonyDisplayInfo, subId)
+                         emit(CallbackEvent.OnDisplayInfoChanged(telephonyDisplayInfo))
+                     }
+@@ -199,14 +193,6 @@ constructor(
+                     }
+ 
+                     override fun onSignalStrengthsChanged(signalStrength: SignalStrength) {
+-                        // 分别记录总等级与各制式的等级、dBm，便于对照状态栏。
+-                        val cells = signalStrength.cellSignalStrengths.joinToString { cell ->
+-                            "${cell.javaClass.simpleName}(level=${cell.level}, dbm=${cell.dbm})"
+-                        }
+-                        Log.d(
+-                            "MobileSignalDebug",
+-                            "source kairos subId=$subId level=${signalStrength.level} cells=[$cells]",
+-                        )
+                         logger.logOnSignalStrengthsChanged(signalStrength, subId)
+                         emit(CallbackEvent.OnSignalStrengthChanged(signalStrength))
+                     }
+diff --git a/packages/SystemUI/src/com/android/systemui/statusbar/pipeline/mobile/ui/binder/MobileIconBinder.kt b/packages/SystemUI/src/com/android/systemui/statusbar/pipeline/mobile/ui/binder/MobileIconBinder.kt
+index a77ab13cb..3904cebea 100644
+--- a/packages/SystemUI/src/com/android/systemui/statusbar/pipeline/mobile/ui/binder/MobileIconBinder.kt
++++ b/packages/SystemUI/src/com/android/systemui/statusbar/pipeline/mobile/ui/binder/MobileIconBinder.kt
+@@ -18,7 +18,6 @@ package com.android.systemui.statusbar.pipeline.mobile.ui.binder
+ 
+ import android.annotation.ColorInt
+ import android.content.res.ColorStateList
+-import android.util.Log
+ import android.view.View
+ import android.view.View.GONE
+ import android.view.View.VISIBLE
+@@ -151,11 +150,6 @@ object MobileIconBinder {
+                             }
+                             .collect { (shouldRequestLayout, newIcon) ->
+                                 if (newIcon is SignalIconModel.CellularTypeIconModel) {
+-                                    Log.d(
+-                                        "MobileSignalDebug",
+-                                        "ui subId=${viewModel.subscriptionId} level=${newIcon.level} " +
+-                                            "bars=${newIcon.numberOfLevels - 1} icon=$newIcon",
+-                                    )
+                                     val packedSignalDrawableState = newIcon.toSignalDrawableState()
+                                     viewModel.verboseLogger
+                                         ?.logBinderReceivedSignalCellularTypeIcon(
+@@ -201,12 +195,6 @@ object MobileIconBinder {
+                                 viewModel.subscriptionId,
+                                 dataTypeId,
+                             )
+-                            val networkIcon =
+-                                dataTypeId?.let { view.resources.getResourceName(it.resId) } ?: "hidden"
+-                            Log.d(
+-                                "MobileSignalDebug",
+-                                "ui subId=${viewModel.subscriptionId} networkIcon=$networkIcon",
+-                            )
+                             dataTypeId?.let { IconViewBinder.bind(dataTypeId, networkTypeView) }
+                             val prevVis = networkTypeContainer.visibility
+                             networkTypeContainer.visibility =
+diff --git a/packages/SystemUI/src/com/android/systemui/statusbar/pipeline/mobile/ui/binder/MobileIconBinderKairos.kt b/packages/SystemUI/src/com/android/systemui/statusbar/pipeline/mobile/ui/binder/MobileIconBinderKairos.kt
+index 6f5dea09b..4a1be437e 100644
+--- a/packages/SystemUI/src/com/android/systemui/statusbar/pipeline/mobile/ui/binder/MobileIconBinderKairos.kt
++++ b/packages/SystemUI/src/com/android/systemui/statusbar/pipeline/mobile/ui/binder/MobileIconBinderKairos.kt
+@@ -18,7 +18,6 @@ package com.android.systemui.statusbar.pipeline.mobile.ui.binder
+ 
+ import android.content.res.ColorStateList
+ import android.graphics.Color
+-import android.util.Log
+ import android.view.View
+ import android.view.ViewGroup
+ import android.widget.FrameLayout
+@@ -217,11 +216,6 @@ object MobileIconBinderKairos {
+                         else -> false
+                     }
+                 if (newIcon is SignalIconModel.CellularTypeIconModel) {
+-                    Log.d(
+-                        "MobileSignalDebug",
+-                        "ui subId=${viewModel.subscriptionId} level=${newIcon.level} " +
+-                            "bars=${newIcon.numberOfLevels - 1} icon=$newIcon",
+-                    )
+                     val packedSignalDrawableState = newIcon.toSignalDrawableState()
+                     viewModel.verboseLogger?.logBinderReceivedSignalCellularTypeIcon(
+                         parentView = view,
+@@ -265,12 +259,6 @@ object MobileIconBinderKairos {
+                     viewModel.subscriptionId,
+                     dataTypeId,
+                 )
+-                val networkIcon =
+-                    dataTypeId?.let { view.resources.getResourceName(it.resId) } ?: "hidden"
+-                Log.d(
+-                    "MobileSignalDebug",
+-                    "ui subId=${viewModel.subscriptionId} networkIcon=$networkIcon",
+-                )
+                 dataTypeId?.let { IconViewBinder.bind(dataTypeId, networkTypeView) }
+                 val prevVis = networkTypeContainer.visibility
+                 networkTypeContainer.visibility =
+diff --git a/packages/SystemUI/src/com/android/systemui/statusbar/pipeline/mobile/ui/compose/MobileIcon.kt b/packages/SystemUI/src/com/android/systemui/statusbar/pipeline/mobile/ui/compose/MobileIcon.kt
+index 678d35d4b..9cafc4d18 100644
+--- a/packages/SystemUI/src/com/android/systemui/statusbar/pipeline/mobile/ui/compose/MobileIcon.kt
++++ b/packages/SystemUI/src/com/android/systemui/statusbar/pipeline/mobile/ui/compose/MobileIcon.kt
+@@ -16,7 +16,6 @@
+ 
+ package com.android.systemui.statusbar.pipeline.mobile.ui.compose
+ 
+-import android.util.Log
+ import androidx.compose.foundation.Canvas
+ import androidx.compose.foundation.Image
+ import androidx.compose.foundation.layout.Box
+@@ -29,7 +28,6 @@ import androidx.compose.foundation.layout.size
+ import androidx.compose.foundation.layout.width
+ import androidx.compose.material3.LocalContentColor
+ import androidx.compose.runtime.Composable
+-import androidx.compose.runtime.LaunchedEffect
+ import androidx.compose.ui.Alignment
+ import androidx.compose.ui.Modifier
+ import androidx.compose.ui.geometry.CornerRadius
+@@ -63,7 +61,6 @@ import com.android.systemui.statusbar.pipeline.shared.ui.composable.ActivityIndi
+ @Composable
+ fun MobileIcon(state: MobileIconState, modifier: Modifier = Modifier) {
+     val isVisible = state.isVisible
+-
+     if (!isVisible) return
+ 
+     val iconModel = state.icon
+@@ -71,13 +68,6 @@ fun MobileIcon(state: MobileIconState, modifier: Modifier = Modifier) {
+     val context = LocalContext.current
+     val networkTypeIcon = state.networkTypeIcon
+ 
+-    // 仅在显示状态变化时记录，避免每次重组重复输出。
+-    LaunchedEffect(iconModel, networkTypeIcon) {
+-        val networkIcon =
+-            networkTypeIcon?.let { context.resources.getResourceName(it.resId) } ?: "hidden"
+-        Log.d("MobileSignalDebug", "ui compose icon=$iconModel networkIcon=$networkIcon")
+-    }
+-
+     Row(
+         verticalAlignment = Alignment.CenterVertically,
+         modifier =
+diff --git a/packages/SystemUI/src/com/android/systemui/statusbar/pipeline/wifi/ui/model/WifiIcon.kt b/packages/SystemUI/src/com/android/systemui/statusbar/pipeline/wifi/ui/model/WifiIcon.kt
+index 96e5435ad..286c3b46d 100644
+--- a/packages/SystemUI/src/com/android/systemui/statusbar/pipeline/wifi/ui/model/WifiIcon.kt
++++ b/packages/SystemUI/src/com/android/systemui/statusbar/pipeline/wifi/ui/model/WifiIcon.kt
+@@ -18,7 +18,6 @@ package com.android.systemui.statusbar.pipeline.wifi.ui.model
+ 
+ import android.annotation.DrawableRes
+ import android.content.Context
+-import android.util.Log
+ import androidx.annotation.StringRes
+ import androidx.annotation.VisibleForTesting
+ import com.android.settingslib.AccessibilityContentDescriptions.WIFI_CONNECTION_STRENGTH
+@@ -137,12 +136,6 @@ sealed interface WifiIcon : Diffable<WifiIcon> {
+                 } else {
+                     WifiIcons.WIFI_FULL_ICONS[this.level]
+                 }
+-            Log.d(
+-                "WifiSignalDebug",
+-                "source=WifiIcon level=${this.level} " +
+-                    "icon=${context.resources.getResourceEntryName(iconRes)} " +
+-                    "showExclamation=${this.showExclamation}",
+-            )
+             return if (this.showExclamation) {
+                 Visible(
+                     iconRes,
+diff --git a/packages/SystemUI/src/com/android/systemui/statusbar/policy/BatteryControllerImpl.java b/packages/SystemUI/src/com/android/systemui/statusbar/policy/BatteryControllerImpl.java
+index 86e69eff2..b52b32a29 100644
+--- a/packages/SystemUI/src/com/android/systemui/statusbar/policy/BatteryControllerImpl.java
++++ b/packages/SystemUI/src/com/android/systemui/statusbar/policy/BatteryControllerImpl.java
+@@ -263,12 +263,6 @@ public class BatteryControllerImpl extends BroadcastReceiver implements BatteryC
+                     BatteryManager.BATTERY_STATUS_UNKNOWN);
+             mCharged = status == BatteryManager.BATTERY_STATUS_FULL;
+             mCharging = mCharged || status == BatteryManager.BATTERY_STATUS_CHARGING;
+-            android.util.Log.d(TAG, "Battery broadcast: level=" + mLevel
+-                    + ", status=" + status
+-                    + ", charging=" + (status == BatteryManager.BATTERY_STATUS_CHARGING)
+-                    + ", full=" + mCharged
+-                    + ", pluggedIn=" + mPluggedIn
+-                    + ", pluggedSource=" + mPluggedChargingSource);
+             if (mWirelessCharging != (mCharging
+                     && intent.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0)
+                     == BatteryManager.BATTERY_PLUGGED_WIRELESS)) {
+-- 
+2.56.0
+

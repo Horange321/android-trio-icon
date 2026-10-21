@@ -1,0 +1,411 @@
+From 3a0bfe2971d0d7e702b49060db18e15223364e20 Mon Sep 17 00:00:00 2001
+From: Horange <horange321@163.com>
+Date: Sun, 18 Oct 2026 11:47:01 +0800
+Subject: [PATCH 2/4] =?UTF-8?q?=E6=95=B0=E6=8D=AE=E6=9B=B4=E6=96=B0=20@AI?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change-Id: I38fa429cca378b18e7afd349d8aad0a906c61183
+---
+ .../systemui/battery/BatteryMeterView.java    |   7 +-
+ .../systemui/battery/TrioBatteryDrawable.kt   | 148 +++++++++++++++---
+ .../battery/ui/composable/UnifiedBattery.kt   |  56 ++++++-
+ packages/SystemUI/trio-battery-handoff.md     |  48 ++++++
+ 4 files changed, 233 insertions(+), 26 deletions(-)
+ create mode 100644 packages/SystemUI/trio-battery-handoff.md
+
+diff --git a/packages/SystemUI/src/com/android/systemui/battery/BatteryMeterView.java b/packages/SystemUI/src/com/android/systemui/battery/BatteryMeterView.java
+index 60b30fa49..500e85f50 100644
+--- a/packages/SystemUI/src/com/android/systemui/battery/BatteryMeterView.java
++++ b/packages/SystemUI/src/com/android/systemui/battery/BatteryMeterView.java
+@@ -76,7 +76,7 @@ public class BatteryMeterView extends LinearLayout implements DarkReceiver {
+ 
+     private final AccessorizedBatteryDrawable mDrawable;
+     private final ImageView mBatteryIconView;
+-    private final TrioBatteryDrawable mTrioDrawable = new TrioBatteryDrawable();
++    private final TrioBatteryDrawable mTrioDrawable;
+     private TextView mBatteryPercentView;
+ 
+     private final @StyleRes int mPercentageStyleId;
+@@ -112,6 +112,8 @@ public class BatteryMeterView extends LinearLayout implements DarkReceiver {
+     public BatteryMeterView(Context context, AttributeSet attrs, int defStyle) {
+         super(context, attrs, defStyle);
+ 
++        mTrioDrawable = new TrioBatteryDrawable(context);
++
+         setOrientation(LinearLayout.HORIZONTAL);
+         setGravity(Gravity.CENTER_VERTICAL | Gravity.START);
+ 
+@@ -241,7 +243,9 @@ public class BatteryMeterView extends LinearLayout implements DarkReceiver {
+         boolean wasCharging = isCharging();
+         mPluggedIn = pluggedIn;
+         mLevel = level;
++        mTrioDrawable.invalidateSelf();
+         boolean isCharging = isCharging();
++        mTrioDrawable.setCharging(isCharging);
+         mDrawable.setCharging(isCharging);
+         mDrawable.setBatteryLevel(level);
+         updatePercentText();
+@@ -734,4 +738,3 @@ public class BatteryMeterView extends LinearLayout implements DarkReceiver {
+                 BatteryController.EstimateFetchCompletion completion);
+     }
+ }
+-
+diff --git a/packages/SystemUI/src/com/android/systemui/battery/TrioBatteryDrawable.kt b/packages/SystemUI/src/com/android/systemui/battery/TrioBatteryDrawable.kt
+index c1e3f600f..6459203a6 100644
+--- a/packages/SystemUI/src/com/android/systemui/battery/TrioBatteryDrawable.kt
++++ b/packages/SystemUI/src/com/android/systemui/battery/TrioBatteryDrawable.kt
+@@ -16,6 +16,7 @@
+ 
+ package com.android.systemui.battery
+ 
++import android.content.Context
+ import android.graphics.Canvas
+ import android.graphics.Color
+ import android.graphics.ColorFilter
+@@ -23,15 +24,23 @@ import android.graphics.Paint
+ import android.graphics.PixelFormat
+ import android.graphics.RectF
+ import android.graphics.drawable.Drawable
++import android.net.wifi.WifiManager
++import android.os.BatteryManager
++import android.telephony.TelephonyManager
++import android.telephony.TelephonyDisplayInfo
++import com.android.settingslib.mobile.TelephonyIcons
+ import kotlin.math.cos
+ import kotlin.math.min
+ import kotlin.math.sin
+ 
+ /** 状态栏三合一图标，Compose 和 View 共用 canvas.py 的绘制比例。 */
+-class TrioBatteryDrawable : Drawable() {
++class TrioBatteryDrawable(private val context: Context) : Drawable() {
+     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+     private var foreground = Color.WHITE
+     private var drawableAlpha = 255
++    private var charging = false
++    private var displayNetworkType: Int? = null
++    private var overrideNetworkType = TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NONE
+ 
+     override fun draw(canvas: Canvas) {
+         val saveCount = canvas.save()
+@@ -48,40 +57,93 @@ class TrioBatteryDrawable : Drawable() {
+                 (foreground and 0x00ffffff) or
+                     (Color.alpha(foreground) * drawableAlpha / 255 shl 24)
+             val muted = (color and 0x00ffffff) or (Color.alpha(color) * 0x55 / 255 shl 24)
++            val ringColor =
++                if (charging) {
++                    (0x00ff00 or (Color.alpha(color) shl 24))
++                } else {
++                    color
++                }
+ 
+-            // TODO：接入真实电量，当前固定为 60%。
+-            val batteryLevel = 60
++            // TODO：接入 BatteryViewModel，当前从系统 BatteryManager 读取。
++            val batteryManager = context.getSystemService(BatteryManager::class.java)
++            val batteryLevel =
++                batteryManager?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
++                    ?.takeIf { it in 0..100 } ?: 0
+             val ring = RectF(cx - radius, cy - radius, cx + radius, cy + radius)
+             paint.style = Paint.Style.STROKE
+             paint.strokeCap = Paint.Cap.ROUND
+             paint.strokeWidth = 2.2f * 16f
+             paint.color = muted
+             canvas.drawArc(ring, -200f, 220f, false, paint)
+-            paint.color = color
++            paint.color = ringColor
+             canvas.drawArc(ring, -200f, 220f * batteryLevel / 100f, false, paint)
+ 
+-            // TODO：接入 Wi-Fi 连接状态；未连接时在中心显示真实蜂窝类型。
+-            // TODO：接入真实 Wi-Fi 强度，当前固定点亮内弧、淡化外弧。
+-            val wifiLevel = 1
++            // TODO：接入 MobileIconViewModel；平台等级范围为 0..4。
++            val telephonyManager = context.getSystemService(TelephonyManager::class.java)
++            val wifiManager = context.getSystemService(WifiManager::class.java)
++            val wifiInfo = wifiManager?.connectionInfo
++            val wifiConnected = wifiInfo != null && wifiInfo.networkId != -1
++            // TODO：接入 WifiViewModel；平台等级范围为 0..4。
++            val wifiLevel =
++                if (wifiConnected && wifiInfo!!.rssi != -127) {
++                    wifiManager.calculateSignalLevel(wifiInfo.rssi)
++                } else {
++                    0
++                }
+             val dotCy = cy + radius * 0.40f
+-            paint.strokeWidth = 3f * 16f
+-            repeat(2) { index ->
+-                val arcRadius = radius * (0.45f + index * 0.45f)
+-                paint.color = if (index < wifiLevel) color else muted
+-                canvas.drawArc(
+-                    RectF(cx - arcRadius, dotCy - arcRadius, cx + arcRadius, dotCy + arcRadius),
+-                    225f,
+-                    90f,
+-                    false,
+-                    paint,
+-                )
++            if (wifiConnected) {
++                paint.strokeWidth = 3f * 16f
++                val wifiArcs =
++                    when {
++                        wifiLevel >= 4 -> 2
++                        wifiLevel >= 2 -> 1
++                        else -> 0
++                    }
++                repeat(2) { index ->
++                    val arcRadius = radius * (0.45f + index * 0.45f)
++                    paint.color = if (index < wifiArcs) color else muted
++                    canvas.drawArc(
++                        RectF(cx - arcRadius, dotCy - arcRadius, cx + arcRadius, dotCy + arcRadius),
++                        225f,
++                        90f,
++                        false,
++                        paint,
++                    )
++                }
++                paint.style = Paint.Style.FILL
++                paint.color = if (wifiLevel >= 1) color else muted
++                canvas.drawCircle(cx, dotCy, 2f * 16f, paint)
++            } else {
++                // TODO：改为直接使用 MobileIconViewModel.networkTypeIcon。
++                val typeIcon =
++                    networkTypeIcon(
++                        displayNetworkType ?: telephonyManager?.dataNetworkType,
++                        overrideNetworkType,
++                    )
++                typeIcon?.let { iconId ->
++                    context.getDrawable(iconId)?.let { icon ->
++                        if (icon.intrinsicWidth > 0 && icon.intrinsicHeight > 0) {
++                            val iconHeight = 200
++                            val iconWidth =
++                                (icon.intrinsicWidth.toFloat() / icon.intrinsicHeight * iconHeight)
++                                    .toInt()
++//                            val iconCenterY = cy + radius * 0.1f
++                            val iconCenterY = cy
++                            icon.setTint(color)
++                            icon.setBounds(
++                                (cx - iconWidth / 2).toInt(),
++                                (iconCenterY - iconHeight / 2).toInt(),
++                                (cx + iconWidth / 2).toInt(),
++                                (iconCenterY + iconHeight / 2).toInt(),
++                            )
++                            icon.draw(canvas)
++                        }
++                    }
++                }
+             }
+-            paint.style = Paint.Style.FILL
+-            paint.color = color
+-            canvas.drawCircle(cx, dotCy, 2f * 16f, paint)
+ 
+-            // TODO：接入真实蜂窝信号强度，当前固定前三点亮起、第四点淡化。
+-            val mobileLevel = 3
++            val mobileLevel = telephonyManager?.signalStrength?.level?.coerceIn(0, 4) ?: 0
++            paint.style = Paint.Style.FILL
+             repeat(4) { index ->
+                 val angle = -3.0 / 4.0 * Math.PI + index * Math.PI / 6.0
+                 paint.color = if (index < mobileLevel) color else muted
+@@ -104,6 +166,21 @@ class TrioBatteryDrawable : Drawable() {
+         }
+     }
+ 
++    fun setCharging(isCharging: Boolean) {
++        if (charging != isCharging) {
++            charging = isCharging
++            invalidateSelf()
++        }
++    }
++
++    fun setNetworkType(networkType: Int, overrideType: Int) {
++        if (displayNetworkType != networkType || overrideNetworkType != overrideType) {
++            displayNetworkType = networkType
++            overrideNetworkType = overrideType
++            invalidateSelf()
++        }
++    }
++
+     override fun setAlpha(alpha: Int) {
+         drawableAlpha = alpha
+         invalidateSelf()
+@@ -115,4 +192,29 @@ class TrioBatteryDrawable : Drawable() {
+     }
+ 
+     @Deprecated("Deprecated in Java") override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
++
++    private fun networkTypeIcon(type: Int?, overrideType: Int): Int? =
++        when (type) {
++            TelephonyManager.NETWORK_TYPE_NR -> TelephonyIcons.ICON_5G
++            TelephonyManager.NETWORK_TYPE_LTE ->
++                if (
++                    overrideType == TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NR_NSA ||
++                        overrideType == TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NR_NSA_MMWAVE ||
++                        overrideType == TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NR_ADVANCED
++                ) {
++                    TelephonyIcons.ICON_5G
++                } else {
++                    TelephonyIcons.ICON_LTE
++                }
++            TelephonyManager.NETWORK_TYPE_HSPAP -> TelephonyIcons.ICON_H_PLUS
++            TelephonyManager.NETWORK_TYPE_HSPA,
++            TelephonyManager.NETWORK_TYPE_HSDPA,
++            TelephonyManager.NETWORK_TYPE_HSUPA -> TelephonyIcons.ICON_H
++            TelephonyManager.NETWORK_TYPE_UMTS -> TelephonyIcons.ICON_3G
++            TelephonyManager.NETWORK_TYPE_EDGE -> TelephonyIcons.ICON_E
++            TelephonyManager.NETWORK_TYPE_GPRS,
++            TelephonyManager.NETWORK_TYPE_GSM -> TelephonyIcons.ICON_G
++            else -> null
++        }
++
+ }
+diff --git a/packages/SystemUI/src/com/android/systemui/statusbar/pipeline/battery/ui/composable/UnifiedBattery.kt b/packages/SystemUI/src/com/android/systemui/statusbar/pipeline/battery/ui/composable/UnifiedBattery.kt
+index 9008e7c2e..dc584bfc9 100644
+--- a/packages/SystemUI/src/com/android/systemui/statusbar/pipeline/battery/ui/composable/UnifiedBattery.kt
++++ b/packages/SystemUI/src/com/android/systemui/statusbar/pipeline/battery/ui/composable/UnifiedBattery.kt
+@@ -16,12 +16,22 @@
+ 
+ package com.android.systemui.statusbar.pipeline.battery.ui.composable
+ 
++import android.content.BroadcastReceiver
++import android.content.Context
++import android.content.Intent
++import android.content.IntentFilter
+ import android.graphics.Rect
++import android.net.wifi.WifiManager
++import android.telephony.SignalStrength
++import android.telephony.TelephonyCallback
++import android.telephony.TelephonyDisplayInfo
++import android.telephony.TelephonyManager
+ import android.util.Log
+ import androidx.compose.foundation.Canvas
+ import androidx.compose.foundation.layout.fillMaxSize
+ import androidx.compose.foundation.layout.size
+ import androidx.compose.runtime.Composable
++import androidx.compose.runtime.DisposableEffect
+ import androidx.compose.runtime.SideEffect
+ import androidx.compose.runtime.getValue
+ import androidx.compose.runtime.mutableFloatStateOf
+@@ -52,6 +62,7 @@ import androidx.compose.ui.layout.MeasureScope
+ import androidx.compose.ui.layout.Placeable
+ import androidx.compose.ui.layout.layoutId
+ import androidx.compose.ui.layout.onLayoutRectChanged
++import androidx.compose.ui.platform.LocalContext
+ import androidx.compose.ui.platform.LocalLayoutDirection
+ import androidx.compose.ui.unit.Constraints
+ import androidx.compose.ui.unit.LayoutDirection
+@@ -189,7 +200,47 @@ fun UnifiedBattery(
+         }
+     }
+ 
+-    val drawable = remember { TrioBatteryDrawable() }
++    val context = LocalContext.current
++    var refreshTick by remember { mutableStateOf(0) }
++    var displayNetworkType by remember { mutableStateOf<Pair<Int, Int>?>(null) }
++    DisposableEffect(context) {
++        val receiver =
++            object : BroadcastReceiver() {
++                override fun onReceive(context: Context, intent: Intent) {
++                    refreshTick++
++                }
++            }
++        val filter =
++            IntentFilter().apply {
++                addAction(Intent.ACTION_BATTERY_CHANGED)
++                addAction(WifiManager.RSSI_CHANGED_ACTION)
++                addAction(WifiManager.NETWORK_STATE_CHANGED_ACTION)
++            }
++        context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
++        val telephonyManager = context.getSystemService(TelephonyManager::class.java)
++        val telephonyCallback =
++            object :
++                TelephonyCallback(),
++                TelephonyCallback.SignalStrengthsListener,
++                TelephonyCallback.DisplayInfoListener {
++                override fun onSignalStrengthsChanged(signalStrength: SignalStrength) {
++                    refreshTick++
++                }
++
++                override fun onDisplayInfoChanged(telephonyDisplayInfo: TelephonyDisplayInfo) {
++                    displayNetworkType =
++                        telephonyDisplayInfo.networkType to
++                            telephonyDisplayInfo.overrideNetworkType
++                    refreshTick++
++                }
++            }
++        telephonyManager?.registerTelephonyCallback(context.mainExecutor, telephonyCallback)
++        onDispose {
++            context.unregisterReceiver(receiver)
++            telephonyManager?.unregisterTelephonyCallback(telephonyCallback)
++        }
++    }
++    val drawable = remember(context) { TrioBatteryDrawable(context) }
+     Canvas(
+         modifier =
+             // 明确宽高，避免空 Canvas 在宽度无下限时占满状态栏剩余空间。
+@@ -202,7 +253,10 @@ fun UnifiedBattery(
+                 },
+         contentDescription = viewModel.contentDescription.load() ?: "",
+     ) {
++        refreshTick
+         drawable.setTint(colorProvider().attribution.toArgb())
++        drawable.setCharging(viewModel.isCharging)
++        displayNetworkType?.let { drawable.setNetworkType(it.first, it.second) }
+         drawable.setBounds(0, 0, size.width.roundToInt(), size.height.roundToInt())
+         drawIntoCanvas { drawable.draw(it.nativeCanvas) }
+     }
+diff --git a/packages/SystemUI/trio-battery-handoff.md b/packages/SystemUI/trio-battery-handoff.md
+new file mode 100644
+index 000000000..bf8d141d9
+--- /dev/null
++++ b/packages/SystemUI/trio-battery-handoff.md
+@@ -0,0 +1,48 @@
++# 三合一状态栏电池图标交接笔记
++
++下文路径相对于 `frameworks/base/packages/SystemUI`。
++
++## 实现文件
++
++- `src/com/android/systemui/battery/TrioBatteryDrawable.kt`：三合一图标的共用绘制实现，以及电池、Wi-Fi、蜂窝数据读取逻辑。
++- `src/com/android/systemui/statusbar/pipeline/battery/ui/composable/UnifiedBattery.kt`：Compose 状态栏入口、事件监听和重绘触发。
++- `src/com/android/systemui/battery/BatteryMeterView.java`：传统 View 电池图标入口，使用同一个 `TrioBatteryDrawable`。
++
++## 绘制结构
++
++`TrioBatteryDrawable` 将输入 Canvas 按较短边缩放到 `512 × 512` 的逻辑坐标，图形位置和线宽沿用原 `canvas.py` 比例。Compose 和传统 View 都使用此 Drawable。
++
++- 电量：中心 `(256, 256)`、半径约 `220` 的弧形环。先画低透明度底环，再按电量百分比画前景弧；充电时前景弧使用绿色 `0x00ff00`，否则使用状态栏 tint 色。
++- Wi-Fi：连接时在下方中心位置绘制两段弧和中心圆点，按 Wi-Fi 等级切换激活色与淡色。
++- 蜂窝类型：Wi-Fi 未连接时，在中心绘制 `SettingsLib` 的 `TelephonyIcons` 网络类型 Drawable，不再画 Wi-Fi 弧线／圆点。图标以 12dp 对应的逻辑高度绘制，中心略低于画布中心。
++- 蜂窝信号：底部绘制四个圆点，按蜂窝信号等级点亮。绘制前须设置 `Paint.Style.FILL`，否则会继承电量环的描边样式，点会显示为空心。
++
++## 数据来源
++
++- 电量百分比：`BatteryManager.getIntProperty(BATTERY_PROPERTY_CAPACITY)`，无效值回退为 `0`。TODO：直接接入 `BatteryViewModel`。
++- 充电状态：Compose 使用 `BatteryViewModel.isCharging` 调用 `setCharging()`；传统 View 使用 `BatteryMeterView` 的电池回调更新。状态变化使环的激活部分变绿。
++- Wi-Fi 是否连接：`WifiManager.connectionInfo` 存在且 `networkId != -1`。信号等级从 RSSI 调用 `WifiManager.calculateSignalLevel()` 获取。TODO：接入 `WifiViewModel`。
++- 蜂窝信号等级：`TelephonyManager.signalStrength.level`，限制在 `0..4`。TODO：接入 `MobileIconViewModel` 的 UI 信号模型。
++- 蜂窝类型：Compose 的 `TelephonyCallback.DisplayInfoListener` 提供 `networkType` 和 `overrideNetworkType`，通过 `setNetworkType()` 传给 Drawable。没有该回调值时使用 `TelephonyManager.dataNetworkType`。LTE 遇到 NR NSA、NR NSA mmWave 或 NR Advanced 覆盖时显示 5G。
++- 蜂窝类型资源：当前通过网络类型手动映射至 `TelephonyIcons.ICON_5G`、`ICON_LTE`、`ICON_E`、`ICON_G`、`ICON_H`、`ICON_H_PLUS`、`ICON_3G`。TODO：直接使用 `MobileIconViewModel.networkTypeIcon`，以尊重完整的 `MobileMappings`、运营商配置及 UI 显示条件。
++
++## 数据更新与重绘
++
++Compose 的 `UnifiedBattery` 注册以下系统事件：
++
++- `ACTION_BATTERY_CHANGED`：增加 `refreshTick`。
++- `WifiManager.RSSI_CHANGED_ACTION` 与 `WifiManager.NETWORK_STATE_CHANGED_ACTION`：增加 `refreshTick`。
++- `TelephonyCallback.SignalStrengthsListener`：信号变化时增加 `refreshTick`。
++- `TelephonyCallback.DisplayInfoListener`：先更新网络类型状态，再增加 `refreshTick`。
++
++`refreshTick` 在 Canvas 内容中被读取，以触发 Compose 重绘；不是定时轮询。Composable 销毁时注销广播接收器和电话回调。每次 Drawable 绘制时读取当前电量、Wi-Fi 和蜂窝信号值。
++
++传统 `BatteryMeterView` 的 `onBatteryLevelChanged()` 调用 `invalidateSelf()` 并更新充电状态。该 View 路径目前没有独立注册 Wi-Fi 或蜂窝监听器；Wi-Fi／蜂窝事件驱动刷新已接在 Compose 路径。若传统 View 场景也需要即时响应这些变化，应补接相应监听，或统一改由 ViewModel 推送数据。
++
++## 注意事项
++
++- 状态栏容器尺寸为 `28dp × 24dp`。`UnifiedBattery` 明确设置尺寸，传统 View 也设置最小宽高，避免图标按普通状态栏图标缩小或横向占用多余空间。
++- `TrioBatteryDrawable` 的所有状态更新方法需要调用 `invalidateSelf()`；Compose 入口的状态改变则须同时让 Canvas 重绘。
++- `Context.getDrawable()` 返回值可空；绘制前先判空，并检查 Drawable 的 intrinsic 宽高大于零。
++- Drawable 共用的 `Paint` 会保留上一次的 `style`。在绘制圆点前明确设为 `FILL`，避免它们继承圆弧的 `STROKE`。
++- 未运行编译或模拟器；修改后只做了静态检查。交接时如需验证，请由用户自行编译和运行设备。
+-- 
+2.56.0
+
